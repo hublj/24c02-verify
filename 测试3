@@ -1,0 +1,267 @@
+#include <Wire.h>
+#include <ESP8266WiFi.h>
+#include <AutoConnect.h>
+
+// EEPROM相关定义
+#define EEPROM_ADDRESS 0x50  // 24C02 EEPROM I2C地址
+#define WRITE_DELAY 10       // 写入后等待时间 (ms)
+
+// WiFi配置
+const char* ssid = "your_SSID";
+const char* password = "your_PASSWORD";
+
+// 定时设置变量
+int startHourForGroup1, startMinuteForGroup1, endHourForGroup1, endMinuteForGroup1;
+bool isTimedGroup1;
+int startHourForGroup2, startMinuteForGroup2, endHourForGroup2, endMinuteForGroup2;
+bool isTimedGroup2;
+
+// 标志位用于防止重复打印WiFi连接成功消息
+bool wifiConnected = false;
+
+// 初始化I2C总线和串口通信
+void setup() {
+  Serial.begin(115200);
+  Wire.begin(); // 初始化I2C总线
+  
+  // 初始化WiFi
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(ssid, password);
+
+  // 等待WiFi连接
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(1000);
+    Serial.println("Connecting to WiFi...");
+  }
+  wifiConnected = true;
+  Serial.println("WiFi连接成功，执行后续操作...");
+
+  // 初始化EEPROM内容（可选）
+  initializeEEPROM();
+
+  // 读取定时设置
+  readTimingSettingsFromEEPROM();
+}
+
+void loop() {
+  // 检查WiFi连接状态
+  if (WiFi.status() == WL_CONNECTED && !wifiConnected) {
+    Serial.println("WiFi重新连接成功，执行后续操作...");
+    wifiConnected = true;
+  } else if (WiFi.status() != WL_CONNECTED) {
+    wifiConnected = false;
+    Serial.println("WiFi断开连接，尝试重新连接...");
+    WiFi.reconnect();
+  }
+
+  // 执行其他任务...
+  delay(1000); // 防止过快循环
+}
+
+// 初始化EEPROM内容（可选）
+void initializeEEPROM() {
+  // 将所有字节初始化为0xFF，表示未初始化的状态
+  for (uint8_t i = 0; i < 256; i++) {
+    writeEEPROMByte(i, 0xFF);
+  }
+}
+
+// 写入EEPROM单字节函数，带重试机制
+bool writeEEPROMByte(uint8_t address, byte data) {
+  if (address >= 256) { // 8位寻址范围检查
+    Serial.print("Error: Address out of EEPROM range: ");
+    Serial.println(address, HEX);
+    return false;
+  }
+
+  int maxRetries = 3;
+  bool success = false;
+
+  for (int retry = 0; retry < maxRetries; retry++) {
+    Wire.beginTransmission(EEPROM_ADDRESS);
+    Wire.write(address);  // 只需写入低地址字节，因为是8位寻址
+    Wire.write(data);
+    if (Wire.endTransmission() == 0) {
+      delay(WRITE_DELAY); // 增加写入后延迟
+
+      // 验证写入的数据是否正确
+      byte readData = readEEPROMByte(address);
+      if (readData == data) {
+        success = true;
+        break;
+      } else {
+        Serial.print("Verification failed at address ");
+        Serial.println(address, HEX);
+      }
+    } else {
+      Serial.print("Error writing to EEPROM at address ");
+      Serial.println(address, HEX);
+      Serial.print("Retry attempt #");
+      Serial.println(retry + 1);
+      delay(100); // 在重试之间稍作延迟
+    }
+  }
+
+  if (!success) {
+    Serial.print("Failed to write after maximum retries at address ");
+    Serial.println(address, HEX);
+  } else {
+    Serial.print("Byte written successfully at address ");
+    Serial.println(address, HEX);
+  }
+
+  return success;
+}
+
+// 从EEPROM读取单字节数据
+byte readEEPROMByte(uint8_t address) {
+  if (address >= 256) { // 8位寻址范围检查
+    Serial.print("Error: Address out of EEPROM range: ");
+    Serial.println(address, HEX);
+    return 0xFF; // 返回无效值表示错误
+  }
+
+  Wire.beginTransmission(EEPROM_ADDRESS);
+  Wire.write(address);  // 只需写入低地址字节，因为是8位寻址
+  Wire.endTransmission(false);
+  Wire.requestFrom(EEPROM_ADDRESS, (uint8_t)1);
+
+  if (Wire.available()) {
+    return Wire.read();
+  } else {
+    Serial.print("Error reading from EEPROM at address ");
+    Serial.println(address, HEX);
+    return 0xFF; // 返回无效值表示错误
+  }
+}
+
+// 将定时设置数据写入EEPROM的函数，添加地址范围检查
+void writeTimingSettingsToEEPROM() {
+  // 构建定时1的数据字符串
+  char data1[8];
+  sprintf(data1, "%02d%02d%02d%02d%c", 
+          startHourForGroup1, startMinuteForGroup1, 
+          endHourForGroup1, endMinuteForGroup1, 
+          isTimedGroup1 ? '1' : '0');
+  
+  // 构建定时2的数据字符串
+  char data2[8];
+  sprintf(data2, "%02d%02d%02d%02d%c", 
+          startHourForGroup2, startMinuteForGroup2, 
+          endHourForGroup2, endMinuteForGroup2, 
+          isTimedGroup2 ? '1' : '0');
+
+  // 写入定时1设置
+  Serial.println("Writing timing settings for Group 1:");
+  for (int i = 0; i < 8; i++) {
+    if (!writeEEPROMByte(i, data1[i])) {
+      Serial.println("Failed to write timing settings for Group 1.");
+      return;
+    }
+    Serial.print("Wrote byte ");
+    Serial.print(data1[i], HEX);
+    Serial.print(" to address ");
+    Serial.println(i, HEX);
+  }
+
+  // 写入定时2设置
+  Serial.println("Writing timing settings for Group 2:");
+  for (int i = 0; i < 8; i++) {
+    if (!writeEEPROMByte(i + 8, data2[i])) {
+      Serial.println("Failed to write timing settings for Group 2.");
+      return;
+    }
+    Serial.print("Wrote byte ");
+    Serial.print(data2[i], HEX);
+    Serial.print(" to address ");
+    Serial.println(i + 8, HEX);
+  }
+
+  Serial.println("Timing settings written successfully.");
+}
+
+// 从EEPROM读取定时设置数据的函数，添加数据合法性检查和读取前后延迟
+void readTimingSettingsFromEEPROM() {
+  delay(20);  // 读取前增加延迟
+
+  // 读取定时1设置
+  if (readTimingSetting(0, startHourForGroup1, startMinuteForGroup1, endHourForGroup1, endMinuteForGroup1, isTimedGroup1)) {
+    Serial.println("定时1读取数据成功");
+  } else {
+    Serial.println("定时1读取数据失败");
+  }
+
+  // 读取定时2设置
+  if (readTimingSetting(8, startHourForGroup2, startMinuteForGroup2, endHourForGroup2, endMinuteForGroup2, isTimedGroup2)) {
+    Serial.println("定时2读取数据成功");
+  } else {
+    Serial.println("定时2读取数据失败");
+  }
+
+  delay(20);  // 读取后增加延迟
+}
+
+// 提取读取定时设置数据的公共函数
+bool readTimingSetting(uint8_t baseAddress, int& startHour, int& startMinute, int& endHour, int& endMinute, bool& isTimed) {
+  if (baseAddress >= 256 || baseAddress + 8 > 256) {  // 检查8位地址范围
+    Serial.println("读取定时设置地址超出8位范围");
+    return false;
+  }
+
+  char data[8];
+  for (int i = 0; i < 8; i++) {
+    byte byteData = readEEPROMByte(baseAddress + i);
+    if (byteData == 0xFF) { // 如果读取失败，返回false
+      Serial.print("Read failed at address ");
+      Serial.println(baseAddress + i, HEX);
+      return false;
+    }
+    data[i] = byteData;
+    Serial.print("Read byte ");
+    Serial.print(byteData, HEX);
+    Serial.print(" from address ");
+    Serial.println(baseAddress + i, HEX);
+  }
+
+  // 输出读取到的原始数据
+  Serial.print("Raw data: ");
+  for (int i = 0; i < 8; i++) {
+    Serial.print(data[i], HEX);
+    Serial.print(" ");
+  }
+  Serial.println();
+
+  // 验证每个字符是否为数字或有效的布尔标志
+  for (int i = 0; i < 6; i++) {  // 前6个字符应该是数字
+    if (data[i] < '0' || data[i] > '9') {
+      Serial.println("读取到的数据包含非数字字符");
+      return false;
+    }
+  }
+  // 第7个字符应该是时间启用标志（假设用'1'表示启用，'0'表示禁用）
+  if (data[6] != '0' && data[6] != '1') {
+    Serial.println("读取到的时间启用标志无效");
+    return false;
+  }
+
+  // 解析数据
+  startHour = (data[0] - '0') * 10 + (data[1] - '0');
+  startMinute = (data[2] - '0') * 10 + (data[3] - '0');
+  endHour = (data[4] - '0') * 10 + (data[5] - '0');
+  endMinute = (data[6] - '0') * 10 + (data[7] - '0');
+  isTimed = data[6] == '1';
+
+  // 输出解析后的数据
+  Serial.print("Parsed data: StartHour=");
+  Serial.print(startHour);
+  Serial.print(", StartMinute=");
+  Serial.print(startMinute);
+  Serial.print(", EndHour=");
+  Serial.print(endHour);
+  Serial.print(", EndMinute=");
+  Serial.print(endMinute);
+  Serial.print(", IsTimed=");
+  Serial.println(isTimed);
+
+  return true;
+}
