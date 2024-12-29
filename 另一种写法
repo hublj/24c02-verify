@@ -1,0 +1,178 @@
+#include <Wire.h>
+#include <ESP8266WebServer.h>
+
+// 全局声明每页字节数
+#define EEPROM_PAGE_SIZE 8
+// 24C02芯片总字节数
+#define EEPROM_TOTAL_SIZE 256
+// 24C02 EEPROM相关定义
+#define EEPROM_ADDRESS 0x50
+
+// 存储定时的开始小时和分钟
+int startHourForGroup1 = 0;
+int startMinuteForGroup1 = 0;
+// 存储定时的结束小时和分钟
+int endHourForGroup1 = 0;
+int endMinuteForGroup1 = 0;
+// 存储第二个定时的开始小时和分钟
+int startHourForGroup2 = 0;
+int startMinuteForGroup2 = 0;
+// 存储第二个定时的结束小时和分钟
+int endHourForGroup2 = 0;
+int endMinuteForGroup2 = 0;
+// 标志位，判断是否设置了定时
+bool isTimedGroup1 = false;
+bool isTimedGroup2 = false;
+
+// Web服务器对象
+ESP8266WebServer server(80);
+
+// 函数声明
+void writeEEPROM(int address, const char* data);
+bool writeTimingSettingsToEEPROM();
+
+// 处理设置定时1的函数
+void handleSetTime1() {
+    if (server.method() == HTTP_POST) {
+        startHourForGroup1 = server.arg("startHourForGroup1").toInt();
+        startMinuteForGroup1 = server.arg("startMinuteForGroup1").toInt();
+        endHourForGroup1 = server.arg("endHourForGroup1").toInt();
+        endMinuteForGroup1 = server.arg("endMinuteForGroup1").toInt();
+        isTimedGroup1 = true;
+        // 将定时设置写入EEPROM
+        if (writeTimingSettingsToEEPROM()) {
+            server.send(200, "text/html; charset=utf-8", "设置成功！");
+        } else {
+            server.send(500, "text/html; charset=utf-8", "定时1设置失败，请检查参数或设备状态。");
+        }
+    } else if (server.method() == HTTP_GET) {
+        // 生成设置定时1的HTML页面代码（此处省略具体HTML代码生成部分）
+        String html = "...";
+        server.send(200, "text/html; charset=utf-8", html);
+    }
+}
+
+// 处理设置定时2的函数
+void handleSetTime2() {
+    if (server.method() == HTTP_POST) {
+        startHourForGroup2 = server.arg("startHourForGroup2").toInt();
+        startMinuteForGroup2 = server.arg("startMinuteForGroup2").toInt();
+        endHourForGroup2 = server.arg("endHourForGroup2").toInt();
+        endMinuteForGroup2 = server.arg("endMinuteForGroup2").toInt();
+        isTimedGroup2 = true;
+        // 将定时设置写入EEPROM
+        if (writeTimingSettingsToEEPROM()) {
+            server.send(200, "text/html; charset=utf-8", "设置成功！");
+        } else {
+            server.send(500, "text/html; charset=utf-8", "定时2设置失败，请检查参数或设备状态。");
+        }
+    } else if (server.method() == HTTP_GET) {
+        // 生成设置定时2的HTML页面代码（此处省略具体HTML代码生成部分）
+        String html = "...";
+        server.send(200, "text/html; charset=utf-8", html);
+    }
+}
+
+// 将定时设置数据写入EEPROM的函数
+bool writeTimingSettingsToEEPROM() {
+    // 计算实际要写入的数据长度
+    int dataLength = isTimedGroup1 && isTimedGroup2? EEPROM_PAGE_SIZE :
+                    (isTimedGroup1? 4 : (isTimedGroup2? 4 : 0));
+    char dataToWrite[dataLength];
+    // 检查定时1参数范围
+    if (isTimedGroup1 && (startHourForGroup1 < 0 || startHourForGroup1 > 23 || startMinuteForGroup1 < 0 || startMinuteForGroup1 > 59 ||
+        endHourForGroup1 < 0 || endHourForGroup1 > 23 || endMinuteForGroup1 < 0 || endMinuteForGroup1 > 59)) {
+        Serial.println("定时1参数范围错误。");
+        return false;
+    }
+    // 检查定时2参数范围
+    if (isTimedGroup2 && (startHourForGroup2 < 0 || startHourForGroup2 > 23 || startMinuteForGroup2 < 0 || startMinuteForGroup2 > 59 ||
+        endHourForGroup2 < 0 || endHourForGroup2 > 23 || endMinuteForGroup2 < 0 || endMinuteForGroup2 > 59)) {
+        Serial.println("定时2参数范围错误。");
+        return false;
+    }
+    if (isTimedGroup1) {
+        dataToWrite[0] = startHourForGroup1;
+        dataToWrite[1] = startMinuteForGroup1;
+        dataToWrite[2] = endHourForGroup1;
+        dataToWrite[3] = endMinuteForGroup1;
+    }
+    if (isTimedGroup2) {
+        dataToWrite[4] = startHourForGroup2;
+        dataToWrite[5] = startMinuteForGroup2;
+        dataToWrite[6] = endHourForGroup2;
+        dataToWrite[7] = endMinuteForGroup2;
+    }
+
+    // 重试次数
+    const int maxRetries = 3;
+    for (int retry = 0; retry < maxRetries; retry++) {
+        // 开始I2C通信传输
+        Wire.beginTransmission(EEPROM_ADDRESS);
+        Wire.write(0x00);  // 写入起始地址
+        Wire.write(dataToWrite, dataLength);
+        if (Wire.endTransmission() == 0) {
+            // 增加延迟时间，确保数据写入完成（每字节至少5ms）
+            delay(dataLength * 5);
+            // 校验写入的数据
+            char readData[dataLength];
+            for (int i = 0; i < dataLength; i++) {
+                Wire.beginTransmission(EEPROM_ADDRESS);
+                Wire.write(0x00 + i);
+                Wire.endTransmission();
+                Wire.requestFrom(EEPROM_ADDRESS, 1);
+                if (Wire.available()) {
+                    readData[i] = Wire.read();
+                    if (readData[i]!= dataToWrite[i]) {
+                        Serial.println("EEPROM数据写入校验失败。");
+                        return false;
+                    }
+                }
+            }
+            Serial.println("EEPROM数据写入成功并校验通过。");
+            return true;
+        } else {
+            // 解析错误码
+            switch (Wire.endTransmission()) {
+                case 1:
+                    Serial.println("数据过长，无法放入指定的EEPROM地址空间。");
+                    break;
+                case 2:
+                    Serial.println("在传输地址阶段发生NACK。");
+                    break;
+                case 3:
+                    Serial.println("在传输数据阶段发生NACK。");
+                    break;
+                case 4:
+                    Serial.println("其他错误。");
+                    break;
+                default:
+                    Serial.println("未知错误。");
+                    break;
+            }
+            Serial.print("写入EEPROM失败，重试次数：");
+            Serial.println(retry + 1);
+            // 重试前短暂延迟（例如100ms）
+            delay(100);
+        }
+    }
+    Serial.println("达到最大重试次数，写入EEPROM失败。");
+    return false;
+}
+
+
+void setup() {
+    // 初始化串口通信
+    Serial.begin(115200);
+    // 初始化Wire库（用于I2C通信）
+    Wire.begin();
+    // 初始化Web服务器
+    server.on("/setTime1", handleSetTime1);
+    server.on("/setTime2", handleSetTime2);
+    server.begin();
+}
+
+void loop() {
+    // 处理Web服务器客户端请求
+    server.handleClient();
+}
