@@ -1,0 +1,140 @@
+#include <Wire.h>
+
+// 定义24C02的地址
+const int EEPROM_ADDRESS = 0x50;
+// 定义最大重试次数
+const int MAX_RETRIES = 3;
+// 定义重试间隔时间（毫秒）
+const int RETRY_DELAY = 100;
+
+// 假设这些是全局的定时设置变量
+int startHourForGroup1, startMinuteForGroup1, endHourForGroup1, endMinuteForGroup1;
+int startHourForGroup2, startMinuteForGroup2, endHourForGroup2, endMinuteForGroup2;
+
+// 写入定时设置到24C02
+bool writeTimingSettingsToEEPROM() {
+    byte dataToWrite[16];
+
+    // 写入定时1数据
+    memcpy(dataToWrite, &startHourForGroup1, sizeof(int));
+    memcpy(dataToWrite + sizeof(int), &startMinuteForGroup1, sizeof(int));
+    memcpy(dataToWrite + 2 * sizeof(int), &endHourForGroup1, sizeof(int));
+    memcpy(dataToWrite + 3 * sizeof(int), &endMinuteForGroup1, sizeof(int));
+
+    // 写入定时2数据
+    memcpy(dataToWrite + 4 * sizeof(int), &startHourForGroup2, sizeof(int));
+    memcpy(dataToWrite + 5 * sizeof(int), &startMinuteForGroup2, sizeof(int));
+    memcpy(dataToWrite + 6 * sizeof(int), &endHourForGroup2, sizeof(int));
+    memcpy(dataToWrite + 7 * sizeof(int), &endMinuteForGroup2, sizeof(int));
+
+    for (int retry = 0; retry < MAX_RETRIES; retry++) {
+        Serial.print("尝试写入24C02，重试次数: ");
+        Serial.println(retry);
+        Wire.beginTransmission(EEPROM_ADDRESS);
+        Wire.write(0x00);  // 从地址0x00开始写入
+        for (int i = 0; i < sizeof(dataToWrite); i++) {
+            Wire.write(dataToWrite[i]);
+        }
+        int error = Wire.endTransmission();
+        if (error == 0) {
+            Serial.println("24C02写入成功");
+            delay(5);
+            return true;  // 写入成功
+        } else {
+            Serial.print("24C02写入失败，错误代码: ");
+            Serial.println(error);
+            delay(RETRY_DELAY);  // 等待一段时间后重试
+        }
+    }
+    Serial.println("所有写入重试都失败");
+    return false;  // 所有重试都失败
+}
+
+// 从24C02读取定时设置
+bool readTimingSettingsFromEEPROM() {
+    byte readBuffer[16];
+
+    for (int retry = 0; retry < MAX_RETRIES; retry++) {
+        Serial.print("尝试读取24C02，重试次数: ");
+        Serial.println(retry);
+        Wire.beginTransmission(EEPROM_ADDRESS);
+        Wire.write(0x00);
+        int error = Wire.endTransmission();
+        if (error == 0) {
+            Wire.requestFrom(EEPROM_ADDRESS, sizeof(readBuffer));
+            int i = 0;
+            while (Wire.available() && i < sizeof(readBuffer)) {
+                readBuffer[i++] = Wire.read();
+            }
+            // 解析读取的数据到定时设置变量
+            memcpy(&startHourForGroup1, readBuffer, sizeof(int));
+            memcpy(&startMinuteForGroup1, readBuffer + sizeof(int), sizeof(int));
+            memcpy(&endHourForGroup1, readBuffer + 2 * sizeof(int), sizeof(int));
+            memcpy(&endMinuteForGroup1, readBuffer + 3 * sizeof(int), sizeof(int));
+
+            memcpy(&startHourForGroup2, readBuffer + 4 * sizeof(int), sizeof(int));
+            memcpy(&startMinuteForGroup2, readBuffer + 5 * sizeof(int), sizeof(int));
+            memcpy(&endHourForGroup2, readBuffer + 6 * sizeof(int), sizeof(int));
+            memcpy(&endMinuteForGroup2, readBuffer + 7 * sizeof(int), sizeof(int));
+            Serial.println("24C02读取成功");
+            return true;  // 读取成功
+        } else {
+            Serial.print("24C02读取失败，错误代码: ");
+            Serial.println(error);
+            delay(RETRY_DELAY);  // 等待一段时间后重试
+        }
+    }
+    Serial.println("所有读取重试都失败");
+    return false;  // 所有重试都失败
+}
+
+// 在setup函数中调用读取函数
+void setup() {
+    Serial.begin(115200);
+    Wire.begin();  // 初始化I2C总线
+
+    if (!readTimingSettingsFromEEPROM()) {
+        Serial.println("读取24C02定时设置失败，使用默认值");
+        // 处理读取失败的情况，例如设置默认值
+        startHourForGroup1 = 8;
+        startMinuteForGroup1 = 0;
+        endHourForGroup1 = 18;
+        endMinuteForGroup1 = 0;
+        startHourForGroup2 = 19;
+        startMinuteForGroup2 = 0;
+        endHourForGroup2 = 22;
+        endMinuteForGroup2 = 0;
+    }
+
+    // 其他初始化代码...
+}
+
+// 在定时设置相关函数中调用写入函数
+void handleSetTime1() {
+    if (!isLoggedIn) {
+        server.sendHeader("Location", "/login");
+        server.send(303);
+        return;
+    }
+    if (server.method() == HTTP_POST) {
+        startHourForGroup1 = server.arg("startHourForGroup1").toInt();
+        startMinuteForGroup1 = server.arg("startMinuteForGroup1").toInt();
+        endHourForGroup1 = server.arg("endHourForGroup1").toInt();
+        endMinuteForGroup1 = server.arg("endMinuteForGroup1").toInt();
+        isTimedGroup1 = true;
+
+        if (!writeTimingSettingsToEEPROM()) {
+            Serial.println("写入24C02定时设置失败");
+            // 处理写入失败的情况，例如提示用户
+            server.send(200, "text/html; charset=utf-8", "设置成功，但保存到24C02失败！");
+        } else {
+            Serial.println("写入24C02定时设置成功");
+            server.send(200, "text/html; charset=utf-8", "设置成功！");
+        }
+    } else if (server.method() == HTTP_GET) {
+        // 生成设置定时1的HTML页面代码（省略）
+    }
+}
+
+// 其他定时设置相关函数类似修改
+
