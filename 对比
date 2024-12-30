@@ -1,3 +1,6 @@
+对比最初代码
+
+
 // 从EEPROM读取定时设置数据的函数，添加数据合法性检查和读取前后延迟
 void readTimingSettingsFromEEPROM() 
 {
@@ -89,7 +92,7 @@ bool readTimingSetting(uint8_t address, int& startHour, int& startMinute, int& e
 
 
 
-对比
+对比最新代码2
 
 
 
