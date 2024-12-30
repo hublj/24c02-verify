@@ -93,3 +93,87 @@ bool readTimingSetting(uint8_t address, int& startHour, int& startMinute, int& e
 
 
 
+// 从EEPROM读取定时设置数据的函数，添加数据合法性检查和读取前后延迟
+void readTimingSettingsFromEEPROM() {
+    delay(20);  // 读取前增加延迟
+
+    // 读取定时1设置
+    byte dataArray1[EEPROM_PAGE_SIZE];
+    if (readPageFromEEPROM(0, dataArray1, 8)) {
+        char data1[8];
+        for (int i = 0; i < 8; i++) {
+            data1[i] = (char)dataArray1[i];
+        }
+        parseTimingData(data1, startHourForGroup1, startMinuteForGroup1, endHourForGroup1, endMinuteForGroup1, isTimedGroup1);
+        Serial.println("定时1读取数据成功");
+    } else {
+        Serial.println("定时1读取数据失败");
+    }
+
+    // 读取定时2设置
+    byte dataArray2[EEPROM_PAGE_SIZE];
+    if (readPageFromEEPROM(8, dataArray2, 8)) {
+        char data2[8];
+        for (int i = 0; i < 8; i++) {
+            data2[i] = (char)dataArray2[i];
+        }
+        parseTimingData(data2, startHourForGroup2, startMinuteForGroup2, endHourForGroup2, endMinuteForGroup2, isTimedGroup2);
+        Serial.println("定时2读取数据成功");
+    } else {
+        Serial.println("定时2读取数据失败");
+    }
+
+    delay(20);  // 读取后增加延迟
+}
+
+// 解析定时数据的函数
+void parseTimingData(char *data, int& startHour, int& startMinute, int& endHour, int& endMinute, bool& isTimed) {
+    // 解析开始时间的小时部分
+    if (isdigit(data[0]) && isdigit(data[1])) {
+        startHour = (data[0] - '0') * 10 + (data[1] - '0');
+    } else {
+        startHour = 0;
+    }
+    // 解析开始时间的分钟部分
+    if (isdigit(data[2]) && isdigit(data[3])) {
+        startMinute = (data[2] - '0') * 10 + (data[3] - '0');
+    } else {
+        startMinute = 0;
+    }
+    // 解析结束时间的小时部分
+    if (isdigit(data[4]) && isdigit(data[5])) {
+        endHour = (data[4] - '0') * 10 + (data[5] - '0');
+    } else {
+        endHour = 0;
+    }
+    // 解析结束时间的分钟部分
+    if (isdigit(data[6]) && isdigit(data[7])) {
+        endMinute = (data[6] - '0') * 10 + (data[7] - '0');
+    } else {
+        endMinute = 0;
+    }
+
+    // 解析是否定时的标志
+    if (data[6] == '0' || data[6] == '1') {
+        isTimed = data[6] == '1';
+    } else {
+        isTimed = false;
+    }
+
+    // 检查并修正开始时间的小时值范围
+    if (startHour < 0 || startHour > 23) {
+        startHour = 0;
+    }
+    // 检查并修正开始时间的分钟值范围
+    if (startMinute < 0 || startMinute > 59) {
+        startMinute = 0;
+    }
+    // 检查并修正结束时间的小时值范围
+    if (endHour < 0 || endHour > 23) {
+        endHour = 0;
+    }
+    // 检查并修正结束时间的分钟值范围
+    if (endMinute < 0 || endMinute > 59) {
+        endMinute = 0;
+    }
+}
