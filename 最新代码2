@@ -7,6 +7,7 @@
 #include <WiFiUdp.h>
 #include <WiFiManager.h>
 #include <algorithm> // 用于std::min
+#include <cctype> // 或 #include <ctype.h> 在Arduino中
 
 // 全局声明每页64字节
 #define EEPROM_PAGE_SIZE 8
