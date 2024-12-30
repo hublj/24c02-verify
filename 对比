@@ -1,0 +1,95 @@
+// 从EEPROM读取定时设置数据的函数，添加数据合法性检查和读取前后延迟
+void readTimingSettingsFromEEPROM() 
+{
+  delay(20);  // 读取前增加延迟
+
+  // 读取定时1设置
+  if (readTimingSetting(0
+, startHourForGroup1, startMinuteForGroup1, endHourForGroup1, endMinuteForGroup1, isTimedGroup1)) {
+    Serial.println("定时1读取数据成功"
+);
+  } else
+ {
+    Serial.println("定时1读取数据失败"
+);
+  }
+
+  // 读取定时2设置
+  if (readTimingSetting(8
+, startHourForGroup2, startMinuteForGroup2, endHourForGroup2, endMinuteForGroup2, isTimedGroup2)) {
+    Serial.println("定时2读取数据成功"
+);
+  } else
+ {
+    Serial.println("定时2读取数据失败"
+);
+  }
+
+  delay(20);  // 读取后增加延迟
+}
+
+// 提取读取定时设置数据的公共函数
+bool readTimingSetting(uint8_t address, int& startHour, int& startMinute, int& endHour, int& endMinute, bool& isTimed) 
+{
+  if (address >= 256 || address + 8 > 256) {  // 检查8位地址范围
+    Serial.println("读取定时设置地址超出8位范围"
+);
+    return false
+;
+  }
+
+  char data[8
+];
+  for (int i = 0; i < 8
+; i++) {
+    byte byteData = readEEPROMByte(address + i);
+    if (byteData == 0xFF) { // 如果读取失败，返回false
+      Serial.println("读取EEPROM失败"
+);
+      return false
+;
+    }
+    data[i] = byteData;
+  }
+
+  // 验证每个字符是否为数字或有效的布尔标志
+  for (int i = 0; i < 6; i++) {  // 前6个字符应该是数字
+    if (data[i] < '0' || data[i] > '9'
+) {
+      Serial.println("读取到的数据包含非数字字符"
+);
+      return false
+;
+    }
+  }
+  // 第7个字符应该是时间启用标志（假设用'1'表示启用，'0'表示禁用）
+  if (data[6] != '0' && data[6] != '1'
+) {
+    Serial.println("读取到的时间启用标志无效"
+);
+    return false
+;
+  }
+
+  // 解析数据
+  startHour = data[0] * 10 + data[1] - '0' * 11
+;
+  startMinute = data[2] * 10 + data[3] - '0' * 11
+;
+  endHour = data[4] * 10 + data[5] - '0' * 11
+;
+  endMinute = data[6] * 10 + data[7] - '0' * 11
+;
+  isTimed = data[6] == '1'
+;
+
+  return true
+;
+}
+
+
+
+对比
+
+
+
