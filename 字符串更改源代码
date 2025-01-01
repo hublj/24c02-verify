@@ -1,0 +1,260 @@
+#include <Wire.h>
+#include <limits>
+#include <algorithm>
+
+// 假设EEPROM地址
+const uint8_t EEPROM_ADDRESS = 0x50;
+// 假设EEPROM页大小
+const uint8_t EEPROM_PAGE_SIZE = 8;
+// EEPROM总页数
+const uint8_t EEPROM_TOTAL_PAGES = 32;
+
+// 假设这些变量已在其他地方定义
+int startHourForGroup1, startMinuteForGroup1, endHourForGroup1, endMinuteForGroup1;
+bool isTimedGroup1;
+int startHourForGroup2, startMinuteForGroup2, endHourForGroup2, endMinuteForGroup2;
+bool isTimedGroup2;
+
+// 定义writeEEPROMByte函数
+void writeEEPROMByte(uint8_t address, byte value) {
+    // 检查地址是否在EEPROM总大小范围内（0 - 255）
+    if (address >= EEPROM_TOTAL_PAGES * EEPROM_PAGE_SIZE) {
+        Serial.println("写入地址超出EEPROM范围");
+        return;
+    }
+    byte error;
+    Wire.beginTransmission(EEPROM_ADDRESS);
+    Wire.write(address);
+    Wire.write(value);
+    error = Wire.endTransmission();
+    if (error!= 0) {
+        Serial.print("I2C写入错误: ");
+        Serial.println(error);
+    }
+}
+
+// 初始化EEPROM内容（可选）
+void initializeEEPROM() {
+    // 对整个EEPROM（32页，每页8字节，共256字节）进行初始化
+    for (uint8_t i = 0; i < EEPROM_TOTAL_PAGES * EEPROM_PAGE_SIZE; i++) {
+        writeEEPROMByte(i, 0xFF);
+    }
+}
+
+// 页读取函数
+bool readPageFromEEPROM(uint8_t startAddress, byte* data, int numBytes) {
+    // 检查起始地址是否在EEPROM总大小范围内（0 - 255）
+    if (startAddress >= EEPROM_TOTAL_PAGES * EEPROM_PAGE_SIZE) {
+        Serial.println("读取起始地址超出EEPROM范围");
+        return false;
+    }
+    // 检查读取字节数是否超过一页大小或超出EEPROM剩余空间
+    if (numBytes > EEPROM_PAGE_SIZE || startAddress + numBytes > EEPROM_TOTAL_PAGES * EEPROM_PAGE_SIZE) {
+        Serial.println("读取字节数超出范围");
+        return false;
+    }
+    byte error;
+    int retryCount = 3;
+    while (retryCount > 0) {
+        Wire.beginTransmission(EEPROM_ADDRESS);
+        Wire.write(startAddress);
+        error = Wire.endTransmission(false);
+        if (error == 0) {
+            Wire.requestFrom(EEPROM_ADDRESS, numBytes);
+            int i = 0;
+            while (Wire.available() && i < numBytes) {
+                data[i++] = Wire.read();
+                delayMicroseconds(10000);
+            }
+            return true;
+        }
+        retryCount--;
+        delay(100);
+    }
+    Serial.print("I2C读取页错误: 重试3次后失败，错误代码 ");
+    Serial.println(error);
+    return false;
+}
+
+// 页写入函数
+bool pageWriteToEEPROM(uint8_t startAddress, byte* data, int numBytes) {
+    // 检查起始地址是否在EEPROM总大小范围内（0 - 255）
+    if (startAddress >= EEPROM_TOTAL_PAGES * EEPROM_PAGE_SIZE) {
+        Serial.println("写入起始地址超出EEPROM范围");
+        return false;
+    }
+    // 检查写入字节数是否超过一页大小或超出EEPROM剩余空间
+    if (numBytes > EEPROM_PAGE_SIZE || startAddress + numBytes > EEPROM_TOTAL_PAGES * EEPROM_PAGE_SIZE) {
+        Serial.println("写入字节数超出范围");
+        return false;
+    }
+    int currentAddress = startAddress;
+    int bytesWritten = 0;
+    int retryCount = 3;
+    while (bytesWritten < numBytes) {
+        byte error;
+        int subRetryCount = 3;
+        while (subRetryCount > 0) {
+            Wire.beginTransmission(EEPROM_ADDRESS);
+            Wire.write(currentAddress);
+            for (int i = 0; i < std::min((size_t)(numBytes - bytesWritten), (size_t)EEPROM_PAGE_SIZE); i++) {
+                Wire.write(data[bytesWritten + i]);
+            }
+            error = Wire.endTransmission();
+            if (error == 0) {
+                break;
+            }
+            subRetryCount--;
+            delay(100);
+        }
+        if (subRetryCount == 0) {
+            Serial.print("I2C页写入错误: 重试3次后失败，错误代码 ");
+            Serial.println(error);
+            return false;
+        }
+        for (int i = 0; i < std::min((size_t)(numBytes - bytesWritten), (size_t)EEPROM_PAGE_SIZE); i++) {
+            delayMicroseconds(10000);
+        }
+        delay(10);
+        currentAddress += std::min((size_t)(numBytes - bytesWritten), (size_t)EEPROM_PAGE_SIZE);
+        bytesWritten += std::min((size_t)(numBytes - bytesWritten), (size_t)EEPROM_PAGE_SIZE);
+    }
+    return true;
+}
+
+// 将定时设置数据写入EEPROM的函数
+void writeTimingSettingsToEEPROM() {
+    // 构建定时1设置数据字符串
+    char data1[8];
+    sprintf(data1, "%02d%02d%02d%02d", startHourForGroup1, startMinuteForGroup1, endHourForGroup1, endMinuteForGroup1);
+    byte dataArray1[EEPROM_PAGE_SIZE];
+    for (int i = 0; i < 8; i++) {
+        dataArray1[i] = data1[i];
+    }
+    Serial.print("写入定时1设置，地址0，数据: ");
+    for (int i = 0; i < 8; i++) {
+        Serial.print(dataArray1[i]);
+    }
+    Serial.println();
+    if (!pageWriteToEEPROM(0, dataArray1, 8)) {
+        Serial.println("Failed to write timing settings for Group 1.");
+        return;
+    }
+
+    // 构建定时2设置数据字符串
+    char data2[8];
+    sprintf(data2, "%02d%02d%02d%02d", startHourForGroup2, startMinuteForGroup2, endHourForGroup2, endMinuteForGroup2);
+    byte dataArray2[EEPROM_PAGE_SIZE];
+    for (int i = 0; i < 8; i++) {
+        dataArray2[i] = data2[i];
+    }
+    Serial.print("写入定时2设置，地址8，数据: ");
+    for (int i = 0; i < 8; i++) {
+        Serial.print(dataArray2[i]);
+    }
+    Serial.println();
+    if (!pageWriteToEEPROM(8, dataArray2, 8)) {
+        Serial.println("Failed to write timing settings for Group 2.");
+        return;
+    }
+
+    Serial.println("Timing settings written successfully.");
+}
+
+// 从EEPROM读取定时设置数据的函数，添加数据合法性检查和读取前后延迟
+void readTimingSettingsFromEEPROM() {
+    delay(20);  // 读取前增加延迟
+
+    // 读取定时1设置
+    byte dataArray1[EEPROM_PAGE_SIZE];
+    Serial.print("读取定时1设置，地址0");
+    if (readPageFromEEPROM(0, dataArray1, 8)) {
+        char data1[8];
+        for (int i = 0; i < 8; i++) {
+            data1[i] = (char)dataArray1[i];
+        }
+        Serial.print("，读取到的数据: ");
+        for (int i = 0; i < 8; i++) {
+            Serial.print(data1[i]);
+        }
+        Serial.println();
+        if (validateTimingData(data1)) {
+            parseTimingData(data1, startHourForGroup1, startMinuteForGroup1, endHourForGroup1, endMinuteForGroup1);
+            Serial.print("定时1设置: ");
+            Serial.print(startHourForGroup1);
+            Serial.print(":");
+            Serial.print(startMinuteForGroup1);
+            Serial.print(" - ");
+            Serial.print(endHourForGroup1);
+            Serial.print(":");
+            Serial.println(endMinuteForGroup1);
+        } else {
+            Serial.println("定时1读取数据格式无效");
+        }
+    } else {
+        Serial.println("定时1读取数据失败");
+    }
+
+    // 读取定时2设置
+    byte dataArray2[EEPROM_PAGE_SIZE];
+    Serial.print("读取定时2设置，地址8");
+    if (readPageFromEEPROM(8, dataArray2, 8)) {
+        char data2[8];
+        for (int i = 0; i < 8; i++) {
+            data2[i] = (char)dataArray2[i];
+        }
+        Serial.print("，读取到的数据: ");
+        for (int i = 0; i < 8; i++) {
+            Serial.print(data2[i]);
+        }
+        Serial.println();
+        if (validateTimingData(data2)) {
+            parseTimingData(data2, startHourForGroup2, startMinuteForGroup2, endHourForGroup2, endMinuteForGroup2);
+            Serial.print("定时2设置: ");
+            Serial.print(startHourForGroup2);
+            Serial.print(":");
+            Serial.print(startMinuteForGroup2);
+            Serial.print(" - ");
+            Serial.print(endHourForGroup2);
+            Serial.print(":");
+            Serial.println(endMinuteForGroup2);
+        } else {
+            Serial.println("定时2读取数据格式无效");
+        }
+    } else {
+        Serial.println("定时2读取数据失败");
+    }
+
+    delay(20);  // 读取后增加延迟
+}
+
+// 验证定时数据格式的函数
+bool validateTimingData(char *data) {
+    for (int i = 0; i < 8; i++) {  // 前8个字符应该是数字
+        if (data[i] < '0' || data[i] > '9') {
+            return false;
+        }
+    }
+    return true;
+}
+
+// 解析定时数据的函数
+void parseTimingData(char *data, int& startHour, int& startMinute, int& endHour, int& endMinute) {
+    startHour = (data[0] - '0') * 10 + (data[1] - '0');
+    startMinute = (data[2] - '0') * 10 + (data[3] - '0');
+    endHour = (data[4] - '0') * 10 + (data[5] - '0');
+    endMinute = (data[6] - '0') * 10 + (data[7] - '0');
+
+    if (startHour < 0 || startHour > 23) {
+        startHour = 0; // 或者根据需求设置默认值
+    }
+    if (startMinute < 0 || startMinute > 59) {
+        startMinute = 0;
+    }
+    if (endHour < 0 || endHour > 23) {
+        endHour = 0;
+    }
+    if (endMinute < 0 || endMinute > 59) {
+        endMinute = 0;
+    }
+}
