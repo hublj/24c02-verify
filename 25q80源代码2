@@ -1,0 +1,266 @@
+#include <Wire.h>
+#include <ESP8266WiFi.h>  // 或者 #include <WiFi.h> 如果使用ESP32
+#include <AutoConnect.h>
+#include <TimeLib.h>      // 添加时间库
+#include <EEPROM.h>       // 使用内置Flash模拟EEPROM
+
+// WiFi配置
+const char* ssid = "your_SSID";    // 替换为您的WiFi SSID
+const char* password = "your_PASSWORD"; // 替换为您的WiFi密码
+
+// NTP服务器配置
+const char* ntpServer = "pool.ntp.org";
+const long gmtOffset_sec = 0; // 设置您的时区偏移量，例如东八区为28800秒
+const int daylightOffset_sec = 3600; // 如果有夏令时，设置夏令时偏移量，否则设为0
+
+// 定时设置变量
+int startHourForGroup1 = 10, startMinuteForGroup1 = 11;
+int endHourForGroup1 = 12, endMinuteForGroup1 = 13;
+bool isTimedGroup1 = true;
+
+int startHourForGroup2 = 14, startMinuteForGroup2 = 15;
+int endHourForGroup2 = 16, endMinuteForGroup2 = 17;
+bool isTimedGroup2 = false;
+
+// 验证定时数据格式的函数
+bool validateTimingData(const char *data) {
+    if (strlen(data) != 9) {
+        return false;
+    }
+    for (int i = 0; i < 8; i++) {
+        if (data[i] < '0' || data[i] > '9') {
+            return false;
+        }
+    }
+    if (data[8] != '0' && data[8] != '1') {
+        return false;
+    }
+    return true;
+}
+
+// 解析定时数据的函数
+void parseTimingData(const char *data, int& startHour, int& startMinute, int& endHour, int& endMinute, bool& isTimed) {
+    startHour = (data[0] - '0') * 10 + (data[1] - '0');
+    startMinute = (data[2] - '0') * 10 + (data[3] - '0');
+    endHour = (data[4] - '0') * 10 + (data[5] - '0');
+    endMinute = (data[6] - '0') * 10 + (data[7] - '0');
+
+    // 确保小时和分钟的有效性
+    startHour = constrain(startHour, 0, 23);
+    startMinute = constrain(startMinute, 0, 59);
+    endHour = constrain(endHour, 0, 23);
+    endMinute = constrain(endMinute, 0, 59);
+
+    isTimed = data[8] == '1';
+}
+
+// 将定时设置数据写入内置Flash模拟EEPROM
+void writeTimingSettingsToEEPROM() {
+    // 构建定时1设置数据字符串
+    char data1[10];
+    sprintf(data1, "%02d%02d%02d%02d%c", 
+            startHourForGroup1, startMinuteForGroup1, 
+            endHourForGroup1, endMinuteForGroup1, 
+            isTimedGroup1 ? '1' : '0');
+    Serial.print("Writing timing 1: ");
+    Serial.println(data1);
+
+    for (int i = 0; i < 9; i++) {
+        EEPROM.write(i, data1[i]);
+    }
+    EEPROM.commit(); // 确保数据被写入Flash
+
+    // 验证写入
+    verifyWrite(0, "timing 1");
+
+    // 构建定时2设置数据字符串
+    char data2[10];
+    sprintf(data2, "%02d%02d%02d%02d%c", 
+            startHourForGroup2, startMinuteForGroup2, 
+            endHourForGroup2, endMinuteForGroup2, 
+            isTimedGroup2 ? '1' : '0');
+    Serial.print("Writing timing 2: ");
+    Serial.println(data2);
+
+    for (int i = 0; i < 9; i++) {
+        EEPROM.write(i + 9, data2[i]);
+    }
+    EEPROM.commit(); // 确保数据被写入Flash
+
+    // 验证写入
+    verifyWrite(9, "timing 2");
+
+    Serial.println("Timing settings written and verified successfully.");
+}
+
+// 在写入之后立即读回并打印数据以验证写入是否成功
+void verifyWrite(uint8_t startAddress, const char* description) {
+    char data[10];
+    for (int i = 0; i < 9; i++) {
+        data[i] = EEPROM.read(startAddress + i);
+    }
+    data[9] = '\0'; // Null-terminate the string
+    Serial.print("Verified " + String(description) + ": ");
+    Serial.println(data);
+
+    if (!validateTimingData(data)) {
+        Serial.println("Verification failed due to invalid data format.");
+    } else {
+        Serial.println("Verification successful.");
+    }
+}
+
+// 从内置Flash模拟EEPROM读取定时设置数据
+void readTimingSettingsFromEEPROM() {
+    // 读取定时1设置
+    char data1[10];
+    for (int i = 0; i < 9; i++) {
+        data1[i] = EEPROM.read(i);
+    }
+    data1[9] = '\0';
+    Serial.print("Read timing 1: ");
+    Serial.println(data1);
+    if (validateTimingData(data1)) {
+        parseTimingData(data1, startHourForGroup1, startMinuteForGroup1, endHourForGroup1, endMinuteForGroup1, isTimedGroup1);
+        Serial.print("Parsed timing 1: ");
+        Serial.print(startHourForGroup1); Serial.print(":"); Serial.print(startMinuteForGroup1);
+        Serial.print(" - "); 
+        Serial.print(endHourForGroup1); Serial.print(":"); Serial.println(endMinuteForGroup1);
+        Serial.print("Is timed: "); Serial.println(isTimedGroup1);
+    } else {
+        Serial.println("定时1读取数据格式无效");
+    }
+
+    // 读取定时2设置
+    char data2[10];
+    for (int i = 0; i < 9; i++) {
+        data2[i] = EEPROM.read(i + 9);
+    }
+    data2[9] = '\0';
+    Serial.print("Read timing 2: ");
+    Serial.println(data2);
+    if (validateTimingData(data2)) {
+        parseTimingData(data2, startHourForGroup2, startMinuteForGroup2, endHourForGroup2, endMinuteForGroup2, isTimedGroup2);
+        Serial.print("Parsed timing 2: ");
+        Serial.print(startHourForGroup2); Serial.print(":"); Serial.print(startMinuteForGroup2);
+        Serial.print(" - "); 
+        Serial.print(endHourForGroup2); Serial.print(":"); Serial.println(endMinuteForGroup2);
+        Serial.print("Is timed: "); Serial.println(isTimedGroup2);
+    } else {
+        Serial.println("定时2读取数据格式无效");
+    }
+}
+
+// 控制组的状态
+void controlGroup(int group, bool shouldTurnOn) {
+    static bool lastState[3] = {false}; // 假设最多有3个组
+    
+    if (shouldTurnOn != lastState[group]) {
+        lastState[group] = shouldTurnOn;
+        if (shouldTurnOn) {
+            Serial.print("Group "); Serial.print(group); Serial.println(" is ON");
+            // 控制Group 打开的代码
+        } else {
+            Serial.print("Group "); Serial.print(group); Serial.println(" is OFF");
+            // 控制Group 关闭的代码
+        }
+    }
+}
+
+// 检查定时器并控制组的状态
+void checkTimersAndControlGroups() {
+    int currentHour = hour(); // 获取当前小时
+    int currentMinute = minute(); // 获取当前分钟
+
+    // 检查定时1
+    if (isTimedGroup1) {
+        bool isWithinTimeRange = 
+            (currentHour > startHourForGroup1 || (currentHour == startHourForGroup1 && currentMinute >= startMinuteForGroup1)) &&
+            (currentHour < endHourForGroup1 || (currentHour == endHourForGroup1 && currentMinute < endMinuteForGroup1));
+
+        Serial.print("Checking Group 1 at time: ");
+        Serial.print(currentHour); Serial.print(":"); Serial.println(currentMinute);
+        Serial.print("isWithinTimeRange: "); Serial.println(isWithinTimeRange);
+
+        controlGroup(1, isWithinTimeRange);
+    } else {
+        controlGroup(1, false);
+    }
+
+    // 检查定时2
+    if (isTimedGroup2) {
+        bool isWithinTimeRange = 
+            (currentHour > startHourForGroup2 || (currentHour == startHourForGroup2 && currentMinute >= startMinuteForGroup2)) &&
+            (currentHour < endHourForGroup2 || (currentHour == endHourForGroup2 && currentMinute < endMinuteForGroup2));
+
+        Serial.print("Checking Group 2 at time: ");
+        Serial.print(currentHour); Serial.print(":"); Serial.println(currentMinute);
+        Serial.print("isWithinTimeRange: "); Serial.println(isWithinTimeRange);
+
+        controlGroup(2, isWithinTimeRange);
+    } else {
+        controlGroup(2, false);
+    }
+}
+
+// WiFi连接初始化
+void setupWiFi() {
+    WiFi.mode(WIFI_STA);
+    WiFi.begin(ssid, password);
+
+    Serial.println();
+    Serial.print("Connecting to WiFi..");
+
+    int wifiConnectTimeout = 20; // 设置最大等待时间（秒）
+    unsigned long startTime = millis();
+
+    while (WiFi.status() != WL_CONNECTED) {
+        delay(500);
+        Serial.print(".");
+        if ((millis() - startTime) / 1000 >= wifiConnectTimeout) {
+            Serial.println("\nWiFi connection timed out!");
+            return;
+        }
+    }
+
+    Serial.println("");
+    Serial.println("WiFi connected");
+    Serial.print("IP address: ");
+    Serial.println(WiFi.localIP());
+
+    // 配置时间服务
+    configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+}
+
+// 同步时间
+void syncTime() {
+    struct tm timeinfo;
+    if(!getLocalTime(&timeinfo)){
+        Serial.println("Failed to obtain time");
+        return;
+    }
+    Serial.println("Time synchronized");
+}
+
+void setup() {
+    Serial.begin(115200);
+    EEPROM.begin(512); // 根据需要调整大小
+
+    // 初始化WiFi
+    setupWiFi();
+
+    // 等待时间同步
+    syncTime();
+
+    // 测试写入和读取操作
+    writeTimingSettingsToEEPROM();
+    readTimingSettingsFromEEPROM();
+}
+
+void loop() {
+    // 检查定时器并控制组的状态
+    checkTimersAndControlGroups();
+
+    // 可以在这里添加其他任务...
+    delay(60000); // 每分钟检查一次定时器状态
+}
