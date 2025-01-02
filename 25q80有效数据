@@ -1,0 +1,174 @@
+// 验证定时数据格式的函数
+bool validateTimingData(const char *data) {
+    if (strlen(data) != 9) {
+        return false;
+    }
+    for (int i = 0; i < 8; i++) {
+        if (data[i] < '0' || data[i] > '9') {
+            return false;
+        }
+    }
+    if (data[8] != '0' && data[8] != '1') {
+        return false;
+    }
+    return true;
+}
+
+// 解析定时数据的函数
+void parseTimingData(const char *data, int& startHour, int& startMinute, int& endHour, int& endMinute, bool& isTimed) {
+    startHour = (data[0] - '0') * 10 + (data[1] - '0');
+    startMinute = (data[2] - '0') * 10 + (data[3] - '0');
+    endHour = (data[4] - '0') * 10 + (data[5] - '0');
+    endMinute = (data[6] - '0') * 10 + (data[7] - '0');
+
+    // 确保小时和分钟的有效性
+    startHour = constrain(startHour, 0, 23);
+    startMinute = constrain(startMinute, 0, 59);
+    endHour = constrain(endHour, 0, 23);
+    endMinute = constrain(endMinute, 0, 59);
+
+    isTimed = data[8] == '1';
+}
+
+// 将定时设置数据写入内置Flash模拟EEPROM
+void writeTimingSettingsToEEPROM() {
+    // 构建定时1设置数据字符串
+    char data1[10];
+    sprintf(data1, "%02d%02d%02d%02d%c", 
+            startHourForGroup1, startMinuteForGroup1, 
+            endHourForGroup1, endMinuteForGroup1, 
+            isTimedGroup1 ? '1' : '0');
+    Serial.print("Writing timing 1: ");
+    Serial.println(data1);
+
+    for (int i = 0; i < 9; i++) {
+        EEPROM.write(i, data1[i]);
+    }
+    EEPROM.commit(); // 确保数据被写入Flash
+
+    // 验证写入
+    verifyWrite(0, "timing 1");
+
+    // 构建定时2设置数据字符串
+    char data2[10];
+    sprintf(data2, "%02d%02d%02d%02d%c", 
+            startHourForGroup2, startMinuteForGroup2, 
+            endHourForGroup2, endMinuteForGroup2, 
+            isTimedGroup2 ? '1' : '0');
+    Serial.print("Writing timing 2: ");
+    Serial.println(data2);
+
+    for (int i = 0; i < 9; i++) {
+        EEPROM.write(i + 9, data2[i]);
+    }
+    EEPROM.commit(); // 确保数据被写入Flash
+
+    // 验证写入
+    verifyWrite(9, "timing 2");
+
+    Serial.println("Timing settings written and verified successfully.");
+}
+
+// 在写入之后立即读回并打印数据以验证写入是否成功
+void verifyWrite(uint8_t startAddress, const char* description) {
+    char data[10];
+    for (int i = 0; i < 9; i++) {
+        data[i] = EEPROM.read(startAddress + i);
+    }
+    data[9] = '\0'; // Null-terminate the string
+    Serial.print("Verified " + String(description) + ": ");
+    Serial.println(data);
+}
+
+// 从内置Flash模拟EEPROM读取定时设置数据
+void readTimingSettingsFromEEPROM() {
+    // 读取定时1设置
+    char data1[10];
+    for (int i = 0; i < 9; i++) {
+        data1[i] = EEPROM.read(i);
+    }
+    data1[9] = '\0';
+    Serial.print("Read timing 1: ");
+    Serial.println(data1);
+    if (validateTimingData(data1)) {
+        parseTimingData(data1, startHourForGroup1, startMinuteForGroup1, endHourForGroup1, endMinuteForGroup1, isTimedGroup1);
+        Serial.print("Parsed timing 1: ");
+        Serial.print(startHourForGroup1); Serial.print(":"); Serial.print(startMinuteForGroup1);
+        Serial.print(" - "); 
+        Serial.print(endHourForGroup1); Serial.print(":"); Serial.println(endMinuteForGroup1);
+        Serial.print("Is timed: "); Serial.println(isTimedGroup1);
+    } else {
+        Serial.println("定时1读取数据格式无效");
+    }
+
+    // 读取定时2设置
+    char data2[10];
+    for (int i = 0; i < 9; i++) {
+        data2[i] = EEPROM.read(i + 9);
+    }
+    data2[9] = '\0';
+    Serial.print("Read timing 2: ");
+    Serial.println(data2);
+    if (validateTimingData(data2)) {
+        parseTimingData(data2, startHourForGroup2, startMinuteForGroup2, endHourForGroup2, endMinuteForGroup2, isTimedGroup2);
+        Serial.print("Parsed timing 2: ");
+        Serial.print(startHourForGroup2); Serial.print(":"); Serial.print(startMinuteForGroup2);
+        Serial.print(" - "); 
+        Serial.print(endHourForGroup2); Serial.print(":"); Serial.println(endMinuteForGroup2);
+        Serial.print("Is timed: "); Serial.println(isTimedGroup2);
+    } else {
+        Serial.println("定时2读取数据格式无效");
+    }
+}
+
+// 控制组的状态
+void controlGroup(int group, bool shouldTurnOn) {
+    static bool lastState[3] = {false}; // 假设最多有3个组
+    
+    if (shouldTurnOn != lastState[group]) {
+        lastState[group] = shouldTurnOn;
+        if (shouldTurnOn) {
+            Serial.print("Group "); Serial.print(group); Serial.println(" is ON");
+            // 控制Group 打开的代码
+        } else {
+            Serial.print("Group "); Serial.print(group); Serial.println(" is OFF");
+            // 控制Group 关闭的代码
+        }
+    }
+}
+
+// 检查定时器并控制组的状态
+void checkTimersAndControlGroups() {
+    int currentHour = hour(); // 获取当前小时
+    int currentMinute = minute(); // 获取当前分钟
+
+    // 检查定时1
+    if (isTimedGroup1) {
+        bool isWithinTimeRange = 
+            (currentHour > startHourForGroup1 || (currentHour == startHourForGroup1 && currentMinute >= startMinuteForGroup1)) &&
+            (currentHour < endHourForGroup1 || (currentHour == endHourForGroup1 && currentMinute < endMinuteForGroup1));
+
+        Serial.print("Checking Group 1 at time: ");
+        Serial.print(currentHour); Serial.print(":"); Serial.println(currentMinute);
+        Serial.print("isWithinTimeRange: "); Serial.println(isWithinTimeRange);
+
+        controlGroup(1, isWithinTimeRange);
+    } else {
+        controlGroup(1, false);
+    }
+
+    // 检查定时2
+    if (isTimedGroup2) {
+        bool isWithinTimeRange = 
+            (currentHour > startHourForGroup2 || (currentHour == startHourForGroup2 && currentMinute >= startMinuteForGroup2)) &&
+            (currentHour < endHourForGroup2 || (currentHour == endHourForGroup2 && currentMinute < endMinuteForGroup2));
+
+        Serial.print("Checking Group 2 at time: ");
+        Serial.print(currentHour); Serial.print(":"); Serial.println(currentMinute);
+        Serial.print("isWithinTimeRange: "); Serial.println(isWithinTimeRange);
+
+        controlGroup(2, isWithinTimeRange);
+    } else {
+        controlGroup(2, false);
+    }
+}
